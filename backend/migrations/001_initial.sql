@@ -1,3 +1,11 @@
 -- SQLAlchemy metadata initializes tables idempotently.
 -- Domain tables: surveys, station_readings, density_runs, visit_plans.
 -- Unique natural keys: source.key; (record.source_id, record.reference).
+--
+-- 002_unit_versioning（由 src/services/migrations.py 幂等执行，台账见 schema_migrations）：
+--   station_readings 增列 unit_version / observed_at / conversion_trace
+--   surveys 增列 v2_effective_at
+--   density_runs 增列 leased_by / leased_at / heartbeat_at / attempts
+--   新增表 quarantined_records（未知/冲突/迟到旧版本/非法值隔离，可重放）
+--   新增表 schema_migrations（迁移台账，中断重启不重复应用）
+-- 历史记录沿用创建时规则：旧行 unit_version 回填为 v1，原始单位即规范量纲。

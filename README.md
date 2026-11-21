@@ -8,12 +8,13 @@
 
 ## 业务模块
 
-1. 业务总览：批次、样本、任务与批准交付账册。
-2. 巡测专题：创建/修改来源说明、查看样本、用真实业务字段追加记录；列表分页。
-3. 分析配置：冻结来源、参数和全部样本，进入Redis队列。
-4. 完整结果：真实算法摘要、专属诊断、全部CSV导出和可恢复失败态。
+1. 业务总览：批次、样本、待处理隔离、任务与批准交付账册。
+2. 巡测专题：创建/修改来源说明与 v2 生效时间、查看样本、按单位版本追加记录并实时预览规范量纲；列表分页。
+3. 分析配置：隔离清零后冻结来源、参数和全部样本（含单位版本规则），进入Redis队列。
+4. 完整结果：真实算法摘要、专属诊断、全部CSV导出（含来源版本与转换规则列）和可恢复失败态。
 5. 复访计划：分析师草案→负责人批准→阅读者下载批准快照。
-6. 审计：登录、来源修改、任务worker完成、业务说明批准等事件。
+6. 版本隔离：未知/冲突/迟到旧版本/非法值台账，保留原始报文，修正重放或人工关闭。
+7. 审计：登录、来源修改、接纳/隔离/重放、任务worker完成、业务说明批准等事件。
 
 ## 快速启动
 
@@ -53,9 +54,19 @@ JWT有效期8小时；PBKDF2盐化哈希保存密码；角色每请求从数据�
 
 ## 实体与字段
 
-Survey / StationReading / DensityRun / VisitPlan 是核心实体；另有User和Audit。数据库实际表：`surveys` → `station_readings` → `density_runs` → `visit_plans`。样本以固定字段JSON保存，后端按以下字段严格验证，不接受未知字段替代必填值：温度 ℃（`temperature`）、相对湿度 %（`humidity`）、颗粒浓度 μg/m³（`particles`）。
+Survey / StationReading / DensityRun / VisitPlan 是核心实体；另有User、Audit和Quarantine。数据库实际表：`surveys` → `station_readings` → `density_runs` → `visit_plans`，隔离行为 `quarantined_records`，迁移台账为 `schema_migrations`。样本以固定字段JSON保存，后端按以下字段严格验证，不接受未知字段替代必填值：温度规范量纲 ℃（`temperature`）、相对湿度 %（`humidity`）、颗粒浓度规范量纲 μg/m³（`particles`）。
 
-实体贯穿 `backend/src/models`、`schemas`、`services`、`controllers`、`routes`，以及 `frontend/src/api/research.js`、`stores/research.js` 和 `pages`。`Source.key` 与 `(Record.source_id, reference)` 为自然键；来源改名不会修改已冻结任务输入。业务说明在创建时保存结果快照，批准后从该快照导出。
+### 字段单位版本与兼容迁移
+
+传感器换代后部分微站改用 v2 单位上报（温度 ℉、颗粒 mg/m³），旧记录为 v1（℃、μg/m³）。版本注册表与转换规则见 `backend/src/services/unit_versions.py` 与 `domain.json` 的 `unit_versions` / `canonical_units` / `conversions`：
+
+- 按**生效时间**接纳：来源的 `v2_effective_at`（缺省用全局 `unit_cutover_at`）决定每个观测时刻应接纳的版本；早于生效时间接纳 v1，之后接纳 v2。
+- 入库即**统一规范量纲**：℉→℃ 用 `(F-32)*5/9`，mg/m³→μg/m³ 用 `*1000`；每行保存 `unit_version`、`observed_at` 与逐字段 `conversion_trace`，页面与 CSV 同量纲且可追查来源版本。
+- **未知或冲突行隔离可重放**：未知版本、与生效版本冲突（含换代后仍上报 v1 的迟到旧版本）、非法数值、同编号内容冲突均进入 `quarantined_records`，原始报文完整保留；修正后经 `POST /quarantine/{id}/replay` 重放，也可 `discard` 人工关闭。重放走同一接纳管道，自然键保证幂等不重复。
+- **冻结规则不可变**：创建研究时把单位版本规则（`unit_rule`）与逐行来源版本固化进任务快照；已冻结研究沿用创建时规则，迟到旧版本只进隔离区，绝不改写冻结输入。来源存在待处理隔离行时，新研究只读完整版本、拒绝冻结（409）。
+- **切换中断可恢复、重试不重复**：结构迁移由 `schema_migrations` 台账保证只执行一次；worker 以租约心跳（`leased_by/leased_at/heartbeat_at`）识别中断任务，租约过期自动回收重投，结果与 CSV 仅在计算成功后一次性提交，`completed` 任务不重复计算，`attempts` 记录尝试次数。
+
+实体贯穿 `backend/src/models`、`schemas`、`services`、`controllers`、`routes`，以及 `frontend/src/api/research.js`、`stores/research.js` 和 `pages`。`Source.key` 与 `(Record.source_id, reference)` 为自然键；来源改名或生效时间调整不会修改已冻结任务输入。业务说明在创建时保存结果快照，批准后从该快照导出。
 
 ## 算法与口径
 
@@ -72,7 +83,7 @@ Survey / StationReading / DensityRun / VisitPlan 是核心实体；另有User和
 
 ## 演示数据与一天剧本
 
-固定seed=42，3个来源 ` HL-202611-01/02/03`，每来源240条，共720条业务记录；三个账号和首轮种子任务。自然键检查后仅插入缺失数据，连跑seed不重复、不覆盖用户修改。`SEED_DEMO=true` 时启动自动执行；失败记录日志但不阻塞服务。首轮任务同样由独立worker真实计算。
+固定seed=42，3个来源 ` HL-202611-01/02/03`，每来源240条共720条 v1 历史记录；另建换代来源 `HL-202611-04`（60条 v2 上报，℉/mg/m³ 入库即转 ℃/μg/m³）与3条典型隔离样例（未知版本、迟到旧版本、非法数值）；三个账号和首轮种子任务。自然键检查后仅插入缺失数据，连跑seed不重复、不覆盖用户修改。`SEED_DEMO=true` 时启动自动执行；失败记录日志但不阻塞服务。首轮任务同样由独立worker真实计算。
 
 1. 09:00 负责人查看三份来源和720条样本。
 2. 09:10 分析师选择 `HL-202611-01 秋季常规组`，核对 `station-density-202611-01.csv`。
@@ -90,6 +101,7 @@ frontend/src/api, stores, types, components/common, hooks, pages, router, utils,
 backend/src/routes, controllers, services, models, schemas, middlewares, utils, constants, config
 backend/scripts/seed_demo.py
 backend/migrations/001_initial.sql
+backend/tests/test_unit_versioning.py（单位版本迁移、隔离重放、冻结规则、worker 恢复与导出同量纲）
 ```
 
 本地后端：Python3.11虚拟环境安装 `backend/requirements.txt`，设置 `DATABASE_URL`、`REDIS_URL`、`ARTIFACT_DIR`，在backend目录运行 `uvicorn src.main:app --reload`；另开终端运行 `python -m src.worker`。原生前端无需编译，推荐以Compose Nginx访问，保证 `/api/` 代理。前端为Google Fonts双字体、oklch色板，离线字体回退serif；1280/768/390响应布局。

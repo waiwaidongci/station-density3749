@@ -12,3 +12,8 @@ class Run(Base):
     result=Column(JSON,nullable=True)
     error=Column(Text,default='')
     created_at=Column(String(40),nullable=False)
+    # 租约：worker 领取后周期性心跳；租约过期的 running 任务可被安全重投，保证中断可恢复且不重复
+    leased_by=Column(String(80),nullable=True)
+    leased_at=Column(String(40),nullable=True)
+    heartbeat_at=Column(String(40),nullable=True)
+    attempts=Column(Integer,default=0)

@@ -41,6 +41,40 @@
       "number"
     ]
   ],
+  "canonical_units": {
+    "temperature": "℃",
+    "humidity": "%",
+    "particles": "μg/m³"
+  },
+  "unit_versions": {
+    "v1": {
+      "label": "v1 · 旧版单位",
+      "units": {
+        "temperature": "℃",
+        "humidity": "%",
+        "particles": "μg/m³"
+      }
+    },
+    "v2": {
+      "label": "v2 · 传感器换代单位",
+      "units": {
+        "temperature": "℉",
+        "humidity": "%",
+        "particles": "mg/m³"
+      }
+    }
+  },
+  "conversions": {
+    "temperature": {
+      "F_to_C": "c=(f-32)*5/9"
+    },
+    "particles": {
+      "mgm3_to_ugm3": "ug=mg*1000"
+    }
+  },
+  "default_unit_version": "v1",
+  "unit_cutover_at": "2026-11-15T00:00:00+00:00",
+  "late_grace_hours": 24,
   "params": [
     [
       "eps",

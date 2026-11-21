@@ -1,6 +1,7 @@
 import math
 from ..config.settings import CONFIG
 def validate_record(values):
+    """对规范量纲（℃、%、μg/m³）下的字段做数值与业务规则校验。"""
     out={}
     for key,label,kind in CONFIG['fields']:
         v=values.get(key)
